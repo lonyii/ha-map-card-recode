@@ -20712,6 +20712,11 @@ class MapCard extends i {
     }
   }
 
+  static async getConfigElement() {
+    await customElements.whenDefined("map-card-editor");
+    return document.createElement("map-card-editor");
+  }
+
   static getStubConfig(hass) {
     // Find a power entity for default
     const sampleEntities = Object.keys(hass.states).filter(
@@ -21045,9 +21050,208 @@ class MapCardEntityMarker extends i {
   }
 }
 
+/**
+ * Home Assistant 可视化编辑面板
+ * 在 Lovelace 编辑界面中提供图形化配置表单，替代手写 YAML。
+ */
+class MapCardEditor extends i {
+  static get properties() {
+    return {
+      hass: {},
+      _config: { state: true },
+      _entities: { state: true },
+    };
+  }
+
+  setConfig(config) {
+    this._config = { ...config };
+    this._entities = (config.entities || []).slice();
+  }
+
+  _valueChanged(ev) {
+    const target = ev.target;
+    const key = target.getAttribute("data-key");
+    if (!key) return;
+    let value = target.value;
+    if (target.type === "number") {
+      value = value === "" ? undefined : Number(value);
+    } else if (target.type === "checkbox" || target.checked !== undefined) {
+      // ha-switch fires 'change' with checked property
+      value = target.checked;
+    }
+    if (value === "" || value === undefined) {
+      delete this._config[key];
+    } else {
+      this._config[key] = value;
+    }
+    this._fireChanged();
+  }
+
+  _entitiesChanged(ev) {
+    this._entities = ev.detail.value || [];
+    this._config.entities = this._entities;
+    this._fireChanged();
+  }
+
+  _selectChanged(ev) {
+    const key = ev.target.getAttribute("data-key");
+    this._config[key] = ev.target.value;
+    this._fireChanged();
+  }
+
+  _fireChanged() {
+    this.dispatchEvent(
+      new CustomEvent("config-changed", { detail: { config: this._config } })
+    );
+  }
+
+  render() {
+    const c = this._config || {};
+    return b`
+      <div class="card-config">
+        <ha-textfield
+          data-key="title"
+          .label="标题 (title)"
+          .value="${c.title || ''}"
+          @input="${this._valueChanged}"
+        ></ha-textfield>
+        <ha-entity-picker
+          data-key="focus_entity"
+          .label="聚焦实体 (focus_entity)"
+          .value="${c.focus_entity || ''}"
+          .hass="${this.hass}"
+          @change="${this._valueChanged}"
+        ></ha-entity-picker>
+        <div class="row">
+          <ha-textfield
+            data-key="x"
+            .label="纬度 (x)"
+            type="number"
+            .value="${c.x ?? ''}"
+            @input="${this._valueChanged}"
+          ></ha-textfield>
+          <ha-textfield
+            data-key="y"
+            .label="经度 (y)"
+            type="number"
+            .value="${c.y ?? ''}"
+            @input="${this._valueChanged}"
+          ></ha-textfield>
+        </div>
+        <div class="row">
+          <ha-textfield
+            data-key="zoom"
+            .label="缩放级别 (zoom, 默认12)"
+            type="number"
+            .value="${c.zoom ?? ''}"
+            @input="${this._valueChanged}"
+          ></ha-textfield>
+          <ha-textfield
+            data-key="card_size"
+            .label="卡片大小 (card_size, 默认5)"
+            type="number"
+            .value="${c.card_size ?? ''}"
+            @input="${this._valueChanged}"
+          ></ha-textfield>
+        </div>
+        <ha-select
+          data-key="theme_mode"
+          .label="主题模式 (theme_mode)"
+          .value="${c.theme_mode || 'auto'}"
+          @selected-changed="${this._selectChanged}"
+        >
+          <mwc-list-item value="auto">自动 (跟随HA)</mwc-list-item>
+          <mwc-list-item value="light">浅色</mwc-list-item>
+          <mwc-list-item value="dark">深色</mwc-list-item>
+        </ha-select>
+        <ha-textfield
+          data-key="carto_api_key"
+          .label="CARTO API Key"
+          .value="${c.carto_api_key || ''}"
+          @input="${this._valueChanged}"
+        ></ha-textfield>
+        <ha-textfield
+          data-key="tile_layer_url"
+          .label="浅色底图URL (tile_layer_url)"
+          .value="${c.tile_layer_url || ''}"
+          @input="${this._valueChanged}"
+        ></ha-textfield>
+        <ha-textfield
+          data-key="tile_layer_url_dark"
+          .label="深色底图URL (tile_layer_url_dark)"
+          .value="${c.tile_layer_url_dark || ''}"
+          @input="${this._valueChanged}"
+        ></ha-textfield>
+        <ha-textfield
+          data-key="history_start"
+          .label="历史起点 (history_start, 如 24 hours ago)"
+          .value="${c.history_start || ''}"
+          @input="${this._valueChanged}"
+        ></ha-textfield>
+        <ha-textfield
+          data-key="history_end"
+          .label="历史终点 (history_end, 默认 now)"
+          .value="${c.history_end || ''}"
+          @input="${this._valueChanged}"
+        ></ha-textfield>
+        <div class="row">
+          <ha-formfield .label="启用聚类 (cluster_markers)">
+            <ha-switch
+              data-key="cluster_markers"
+              .checked="${c.cluster_markers ?? false}"
+              @change="${this._valueChanged}"
+            ></ha-switch>
+          </ha-formfield>
+          <ha-formfield .label="日期范围选择 (history_date_selection)">
+            <ha-switch
+              data-key="history_date_selection"
+              .checked="${c.history_date_selection ?? false}"
+              @change="${this._valueChanged}"
+            ></ha-switch>
+          </ha-formfield>
+          <ha-formfield .label="调试 (debug)">
+            <ha-switch
+              data-key="debug"
+              .checked="${c.debug ?? false}"
+              @change="${this._valueChanged}"
+            ></ha-switch>
+          </ha-formfield>
+        </div>
+        <ha-entities-picker
+          .hass="${this.hass}"
+          .value="${this._entities}"
+          label="实体 (entities)"
+          @value-changed="${this._entitiesChanged}"
+        ></ha-entities-picker>
+      </div>
+    `;
+  }
+
+  static get styles() {
+    return i$3`
+      .card-config {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+      }
+      .row > * {
+        flex: 1;
+      }
+      ha-textfield, ha-select, ha-entity-picker {
+        width: 100%;
+      }
+    `;
+  }
+}
+
 if (!customElements.get("map-card")) {
   customElements.define("map-card", MapCard);
   customElements.define("map-card-entity-marker", MapCardEntityMarker);
+  customElements.define("map-card-editor", MapCardEditor);
   console.info(
     `%cnathan-gs/ha-map-card: 1.16.0`,
     'color: orange; font-weight: bold; background: black'
