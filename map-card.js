@@ -21095,7 +21095,13 @@ class MapCardEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (this.shadowRoot) {
+    // 关键：首次打开编辑器时，setConfig 先被调用（hass 还没注入），
+    // 此时 picker 用 null hass 渲染 → include-domains 不会生效。
+    // 等到 hass 到了，必须重新 render 让 picker 在 hass 就绪后创建。
+    if (this._config && this._render) {
+      this._render();
+    } else if (this.shadowRoot) {
+      // 兜底：如果 _render 还没可用，只做基础 hass 注入
       this.shadowRoot.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = hass; });
     }
   }
@@ -21224,7 +21230,7 @@ class MapCardEditor extends HTMLElement {
       picker.setAttribute('label', `实体 ${idx + 1}`);
       picker.setAttribute(
         'include-domains',
-        '["device_tracker","zone","person","sensor","air_quality","camera","sun"]'
+        '["device_tracker"]'
       );
       picker.setAttribute('allow-custom-entity', '');
 
