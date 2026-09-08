@@ -21076,10 +21076,20 @@ class MapCardEditor extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._hass = null;
+    this._pendingCount = 0;  // 未选择的空 picker 行数（独立于 entities 数组，永不进入 YAML）
   }
 
   setConfig(config) {
     this._config = { ...config };
+    // 防御性清理：如果有残留的空字符串或 __pending_ 占位符（比如以前版本保存的），清除掉
+    if (Array.isArray(this._config.entities)) {
+      this._config.entities = this._config.entities.filter(e =>
+        e !== null && e !== undefined &&
+        !(typeof e === 'string' && (e.trim() === '' || e.startsWith('__pending_')))
+      );
+      if (this._config.entities.length === 0) delete this._config.entities;
+    }
+    this._pendingCount = 0;
     this._render();
   }
 
@@ -21093,6 +21103,7 @@ class MapCardEditor extends HTMLElement {
   _render() {
     const c = this._config;
     const entities = c.entities || [];
+    const totalRows = entities.length + this._pendingCount;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -21155,10 +21166,8 @@ class MapCardEditor extends HTMLElement {
       </div>
     `;
 
-    // focus_entity picker — removed from editor UI, YAML 仍可用
-
-    // entities pickers
-    this._buildEntityPickers(entities);
+    // entities pickers + pending 空 pickers
+    this._buildEntityPickers(entities, totalRows);
 
     // title
     this.shadowRoot.getElementById('f-title').addEventListener('change',
@@ -21187,64 +21196,75 @@ class MapCardEditor extends HTMLElement {
       this._set('history_start', e.target.value.trim() || null);
     });
 
-    // add entity
+    // add entity — 只增计数器，不往 entities 里塞任何占位字符串
     this.shadowRoot.getElementById('add-entity').addEventListener('click', () => {
-      this._set('entities', [...(this._config.entities || []), '']);
+      this._pendingCount++;
+      this._render();
     });
   }
 
-  _buildEntityPickers(entities) {
+  _isPending(id) {
+    return typeof id === 'string' && id.startsWith('__pending_');
+  }
+
+  _buildEntityPickers(entities, totalRows) {
     const container = this.shadowRoot.getElementById('entities-list');
     if (!container) return;
 
-    // 只过滤 null/undefined，保留空字符串 ''（代表刚点"添加实体"还没选的占位行）
-    const cleaned = entities.filter(e => e !== null && e !== undefined);
-    if (cleaned.length !== entities.length) {
-      const config = { ...this._config, entities: cleaned };
-      this._config = config;
-      this.dispatchEvent(new CustomEvent('config-changed', {
-        detail: { config }, bubbles: true, composed: true,
-      }));
-    }
-
-    cleaned.forEach((entity, idx) => {
+    for (let idx = 0; idx < totalRows; idx++) {
       const row = document.createElement('div');
       row.className = 'entity-row';
+      const isPendingRow = idx >= entities.length;
+      const currentValue = isPendingRow ? '' : entities[idx];
 
       const picker = document.createElement('ha-entity-picker');
       picker.hass = this._hass;
-      picker.value = entity || '';
+      picker.value = currentValue;
+      // 严格按 track-history-card-recode.js 格式：JSON 数组字符串作为 attribute
       picker.setAttribute('label', `实体 ${idx + 1}`);
+      picker.setAttribute(
+        'include-domains',
+        '["device_tracker","zone","person","sensor","air_quality","camera","sun"]'
+      );
       picker.setAttribute('allow-custom-entity', '');
-      // 说明：HA ha-entity-picker 在不同版本 API 不同，
-      // 旧版支持 include-domains attribute，新版改成 JS property includeDomains。
-      // 这里统一用 JS property（若当前版本支持则生效，否则 fallback 到全量列表）。
-      try {
-        picker.includeDomains = ['device_tracker', 'zone', 'person', 'sensor', 'air_quality', 'camera', 'sun'];
-      } catch (e) { /* 忽略 */ }
+
       picker.addEventListener('value-changed', e => {
-        const updated = [...(this._config.entities || [])];
-        if (e.detail.value) {
-          updated[idx] = e.detail.value;
+        const newVal = e.detail.value;
+        const currentEntities = [...(this._config.entities || [])];
+
+        if (isPendingRow) {
+          if (newVal) {
+            currentEntities.push(newVal);
+            this._pendingCount = Math.max(0, this._pendingCount - 1);
+          } else {
+            this._pendingCount = Math.max(0, this._pendingCount - 1);
+          }
         } else {
-          updated.splice(idx, 1);
+          if (newVal) {
+            currentEntities[idx] = newVal;
+          } else {
+            currentEntities.splice(idx, 1);
+            this._pendingCount++;  // 已有实体被清空 → 变成 pending 空行
+          }
         }
-        // 只过滤 null/undefined，保留空字符串占位
-        const filtered = updated.filter(v => v !== null && v !== undefined);
-        this._set('entities', filtered);
+
+        this._set('entities', currentEntities);
       });
 
       row.appendChild(picker);
       container.appendChild(row);
-    });
+    }
   }
 
   _set(key, value) {
     const config = { ...this._config };
-    // entities 字段：只过滤 null/undefined，保留 '' 空占位（让"添加实体"按钮有效）
+    // entities 字段：彻底清理 — 永不允许脏数据进入 config
     if (key === 'entities') {
       const list = Array.isArray(value) ? value : [];
-      const filtered = list.filter(v => v !== null && v !== undefined);
+      const filtered = list.filter(v =>
+        v !== null && v !== undefined &&
+        !(typeof v === 'string' && (v.trim() === '' || v.startsWith('__pending_')))
+      );
       if (filtered.length === 0) {
         delete config[key];
       } else {
