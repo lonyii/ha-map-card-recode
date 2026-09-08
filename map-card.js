@@ -21197,10 +21197,9 @@ class MapCardEditor extends HTMLElement {
     const container = this.shadowRoot.getElementById('entities-list');
     if (!container) return;
 
-    // 先清洗一次：移除未选择的空实体（点击"添加实体"后如果一直没选就留空字符串的）
-    const cleaned = entities.filter(e => e && String(e).trim() !== '');
+    // 只过滤 null/undefined，保留空字符串 ''（代表刚点"添加实体"还没选的占位行）
+    const cleaned = entities.filter(e => e !== null && e !== undefined);
     if (cleaned.length !== entities.length) {
-      // 有脏数据，写回一次 config 让它收敛
       const config = { ...this._config, entities: cleaned };
       this._config = config;
       this.dispatchEvent(new CustomEvent('config-changed', {
@@ -21214,14 +21213,15 @@ class MapCardEditor extends HTMLElement {
 
       const picker = document.createElement('ha-entity-picker');
       picker.hass = this._hass;
-      picker.value = entity;
+      picker.value = entity || '';
       picker.setAttribute('label', `实体 ${idx + 1}`);
       picker.setAttribute('allow-custom-entity', '');
-      // 只显示有定位信息的实体（device_tracker / zone / person 等）
-      // HA ha-entity-picker 不支持 latitude 属性，用 include-domains 过滤常用含定位的域
-      picker.setAttribute('include-domains', JSON.stringify([
-        'device_tracker', 'zone', 'person', 'sensor', 'air_quality', 'camera', 'sun'
-      ]));
+      // 说明：HA ha-entity-picker 在不同版本 API 不同，
+      // 旧版支持 include-domains attribute，新版改成 JS property includeDomains。
+      // 这里统一用 JS property（若当前版本支持则生效，否则 fallback 到全量列表）。
+      try {
+        picker.includeDomains = ['device_tracker', 'zone', 'person', 'sensor', 'air_quality', 'camera', 'sun'];
+      } catch (e) { /* 忽略 */ }
       picker.addEventListener('value-changed', e => {
         const updated = [...(this._config.entities || [])];
         if (e.detail.value) {
@@ -21229,8 +21229,8 @@ class MapCardEditor extends HTMLElement {
         } else {
           updated.splice(idx, 1);
         }
-        // 再清洗一次，防止空字符串残留
-        const filtered = updated.filter(v => v && String(v).trim() !== '');
+        // 只过滤 null/undefined，保留空字符串占位
+        const filtered = updated.filter(v => v !== null && v !== undefined);
         this._set('entities', filtered);
       });
 
@@ -21241,10 +21241,10 @@ class MapCardEditor extends HTMLElement {
 
   _set(key, value) {
     const config = { ...this._config };
-    // entities 字段：统一过滤掉空字符串/null/undefined
+    // entities 字段：只过滤 null/undefined，保留 '' 空占位（让"添加实体"按钮有效）
     if (key === 'entities') {
       const list = Array.isArray(value) ? value : [];
-      const filtered = list.filter(v => v && String(v).trim() !== '');
+      const filtered = list.filter(v => v !== null && v !== undefined);
       if (filtered.length === 0) {
         delete config[key];
       } else {
