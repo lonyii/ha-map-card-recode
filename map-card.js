@@ -21196,7 +21196,19 @@ class MapCardEditor extends HTMLElement {
   _buildEntityPickers(entities) {
     const container = this.shadowRoot.getElementById('entities-list');
     if (!container) return;
-    entities.forEach((entity, idx) => {
+
+    // 先清洗一次：移除未选择的空实体（点击"添加实体"后如果一直没选就留空字符串的）
+    const cleaned = entities.filter(e => e && String(e).trim() !== '');
+    if (cleaned.length !== entities.length) {
+      // 有脏数据，写回一次 config 让它收敛
+      const config = { ...this._config, entities: cleaned };
+      this._config = config;
+      this.dispatchEvent(new CustomEvent('config-changed', {
+        detail: { config }, bubbles: true, composed: true,
+      }));
+    }
+
+    cleaned.forEach((entity, idx) => {
       const row = document.createElement('div');
       row.className = 'entity-row';
 
@@ -21205,6 +21217,11 @@ class MapCardEditor extends HTMLElement {
       picker.value = entity;
       picker.setAttribute('label', `实体 ${idx + 1}`);
       picker.setAttribute('allow-custom-entity', '');
+      // 只显示有定位信息的实体（device_tracker / zone / person 等）
+      // HA ha-entity-picker 不支持 latitude 属性，用 include-domains 过滤常用含定位的域
+      picker.setAttribute('include-domains', JSON.stringify([
+        'device_tracker', 'zone', 'person', 'sensor', 'air_quality', 'camera', 'sun'
+      ]));
       picker.addEventListener('value-changed', e => {
         const updated = [...(this._config.entities || [])];
         if (e.detail.value) {
@@ -21212,7 +21229,9 @@ class MapCardEditor extends HTMLElement {
         } else {
           updated.splice(idx, 1);
         }
-        this._set('entities', updated);
+        // 再清洗一次，防止空字符串残留
+        const filtered = updated.filter(v => v && String(v).trim() !== '');
+        this._set('entities', filtered);
       });
 
       row.appendChild(picker);
@@ -21222,7 +21241,16 @@ class MapCardEditor extends HTMLElement {
 
   _set(key, value) {
     const config = { ...this._config };
-    if (value === null || value === undefined) {
+    // entities 字段：统一过滤掉空字符串/null/undefined
+    if (key === 'entities') {
+      const list = Array.isArray(value) ? value : [];
+      const filtered = list.filter(v => v && String(v).trim() !== '');
+      if (filtered.length === 0) {
+        delete config[key];
+      } else {
+        config[key] = filtered;
+      }
+    } else if (value === null || value === undefined) {
       delete config[key];
     } else {
       config[key] = value;
