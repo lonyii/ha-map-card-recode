@@ -1,5 +1,7 @@
 # Map Card
 
+基于 [ha-map-card](https://github.com/nathan-gs/ha-map-card) 进行改写。
+
 基于 [Leaflet](https://leafletjs.com/) 的 Home Assistant 地图卡片，支持实体位置、轨迹历史、WMS/GeoJSON 图层、自定义瓦片等，默认底图为 CARTO Voyager（亮）/ dark_all（暗）并自动跟随 HA 主题切换。
 
 ---
