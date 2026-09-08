@@ -10,8 +10,8 @@
 
 1. **默认底图改为 CARTO 明/暗双底图**
 
-   - 亮色（light）：`https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_2a9o_1_f464969b1975248982396de0`
-   - 暗色（dark）：`https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2a9o_1_f464969b1975248982396de0`
+   - 亮色（light）：`https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=your_key`
+   - 暗色（dark）：`https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=your_key`
 
    原 OpenStreetMap 单一底图被替换为上述成对的 CARTO 瓦片。`{r}` 由 Leaflet 自动处理（Retina 屏取 `@2x`）。
 
