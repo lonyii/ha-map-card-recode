@@ -41,6 +41,9 @@
 type: custom:map-card
 # 使用默认 CARTO 明/暗底图，无需任何额外配置即可跟随主题。
 
+# 填入你的 CARTO API key（未配置时不附加 key）：
+carto_api_key: "你的私有key"
+
 # 如需自定义：
 # tile_layer_url: <亮色底图 URL>
 # tile_layer_url_dark: <暗色底图 URL，设为 null 禁用>
