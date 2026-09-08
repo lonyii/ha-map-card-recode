@@ -10,8 +10,8 @@
 
 1. **默认底图改为 CARTO 明/暗双底图**
 
-   - 亮色（light）：`https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=your_key`
-   - 暗色（dark）：`https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=your_key`
+   - 亮色（light）：`https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_2a9o_1_f464969b1975248982396de0`
+   - 暗色（dark）：`https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2a9o_1_f464969b1975248982396de0`
 
    原 OpenStreetMap 单一底图被替换为上述成对的 CARTO 瓦片。`{r}` 由 Leaflet 自动处理（Retina 屏取 `@2x`）。
 
@@ -28,12 +28,26 @@
 
    可单独指定暗色底图 URL；设为 `null` 可禁用暗色底图，始终使用亮色底图。
 
+5. **CARTO API Key 可通过 YAML 配置**
+
+   底图 URL 中的 `key=` 参数支持三种配置方式：
+   - `carto_api_key` — 通用 key，亮色和暗色底图共用（推荐）
+   - `carto_api_key_light` — 亮色底图专用 key，覆盖通用 key
+   - `carto_api_key_dark` — 暗色底图专用 key，覆盖通用 key
+
+   未配置任何 key 时不附加 `?key=` 参数。
+
+6. **可视化编辑面板**
+
+   新增 `MapCardEditor` 类，在 Lovelace 编辑界面中提供图形化配置表单（`getConfigElement()`），支持标题、聚焦实体、坐标、缩放、主题模式、CARTO API Key、底图 URL、历史时间范围、聚类/调试开关、实体选择等字段的表单编辑。
+
 ### 相关代码位置
 
 - `MapConfig` 构造函数：底图默认 URL 与 `tileLayerDark` 配置
 - `MapCard._setupMap()`：建图时按主题选底图
 - `MapCard._syncBasemapTheme()`：主题切换时实时换图
 - `MapCard` 静态 `styles`：暗色 CSS 滤镜调整
+- `MapCardEditor`：可视化编辑面板
 
 ### 可选配置示例
 
@@ -43,8 +57,11 @@ type: custom:map-card
 
 # 填入你的 CARTO API key（未配置时不附加 key）：
 carto_api_key: "你的私有key"
+# 可选：为亮/暗底图分别指定不同 key（覆盖 carto_api_key）：
+# carto_api_key_light: "亮色专用key"
+# carto_api_key_dark: "暗色专用key"
 
-# 如需自定义：
+# 如需完全自定义底图 URL（优先级最高，覆盖 carto_api_key）：
 # tile_layer_url: <亮色底图 URL>
 # tile_layer_url_dark: <暗色底图 URL，设为 null 禁用>
 # tile_layer_attribution: <attribution 文本>

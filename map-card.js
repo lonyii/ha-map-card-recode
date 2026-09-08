@@ -16562,11 +16562,17 @@ class MapConfig {
     // Default basemaps: CARTO Voyager (light) and CARTO dark_all (dark).
     // The card automatically selects light/dark tiles based on the current
     // Home Assistant theme (see MapCard._isDarkMode()).
-    // The CARTO API key is read from the `carto_api_key` YAML config option.
+    // CARTO API keys can be specified in three ways:
+    //   carto_api_key             — single universal key (applies to both)
+    //   carto_api_key_light       — overrides carto_api_key for light tiles
+    //   carto_api_key_dark        — overrides carto_api_key for dark tiles
     this.cartoApiKey = inputConfig.carto_api_key ?? null;
-    const cartoKeySuffix = this.cartoApiKey ? `?key=${this.cartoApiKey}` : "";
-    const defaultLightTileUrl = `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png${cartoKeySuffix}`;
-    const defaultDarkTileUrl = `https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${cartoKeySuffix}`;
+    const cartoLightKey = inputConfig.carto_api_key_light ?? this.cartoApiKey;
+    const cartoDarkKey = inputConfig.carto_api_key_dark ?? this.cartoApiKey;
+    const lightKeySuffix = cartoLightKey ? `?key=${cartoLightKey}` : "";
+    const darkKeySuffix = cartoDarkKey ? `?key=${cartoDarkKey}` : "";
+    const defaultLightTileUrl = `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png${lightKeySuffix}`;
+    const defaultDarkTileUrl = `https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${darkKeySuffix}`;
     const defaultTileAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
     const tileLayerOptions = this._setConfigWithDefault(inputConfig.tile_layer_options, {});
@@ -20467,6 +20473,10 @@ class MapCard extends i {
   pluginsRenderService;
   /** @type {GeoJsonRenderService} */
   geoJsonRenderService;
+  /** @type {L.TileLayer} 底图瓦片实例（用于主题切换时 setUrl 原地换图） */
+  _baseTileLayer;
+  /** @type {boolean} 当前底图是否为暗色 */
+  _darkMode = false;
   hasError = false;
   hadError = false;
 
@@ -20712,8 +20722,7 @@ class MapCard extends i {
     }
   }
 
-  static async getConfigElement() {
-    await customElements.whenDefined("map-card-editor");
+  static getConfigElement() {
     return document.createElement("map-card-editor");
   }
 
@@ -21154,7 +21163,7 @@ class MapCardEditor extends i {
           data-key="title"
           .label="标题 (title)"
           .value="${c.title ?? ''}"
-          @input="${this._valueChanged}"
+          @change="${this._valueChanged}"
         ></ha-textfield>
 
         <ha-entity-picker
@@ -21171,14 +21180,14 @@ class MapCardEditor extends i {
             .label="纬度 (x)"
             type="number"
             .value="${c.x ?? ''}"
-            @input="${this._valueChanged}"
+            @change="${this._valueChanged}"
           ></ha-textfield>
           <ha-textfield
             data-key="y"
             .label="经度 (y)"
             type="number"
             .value="${c.y ?? ''}"
-            @input="${this._valueChanged}"
+            @change="${this._valueChanged}"
           ></ha-textfield>
         </div>
 
@@ -21188,14 +21197,14 @@ class MapCardEditor extends i {
             .label="缩放级别 (zoom, 默认12)"
             type="number"
             .value="${c.zoom ?? ''}"
-            @input="${this._valueChanged}"
+            @change="${this._valueChanged}"
           ></ha-textfield>
           <ha-textfield
             data-key="card_size"
             .label="卡片大小 (card_size, 默认5)"
             type="number"
             .value="${c.card_size ?? ''}"
-            @input="${this._valueChanged}"
+            @change="${this._valueChanged}"
           ></ha-textfield>
         </div>
 
@@ -21212,37 +21221,52 @@ class MapCardEditor extends i {
 
         <ha-textfield
           data-key="carto_api_key"
-          .label="CARTO API Key"
+          .label="CARTO API Key (通用，亮色暗色共用)"
           .value="${c.carto_api_key ?? ''}"
-          @input="${this._valueChanged}"
+          @change="${this._valueChanged}"
         ></ha-textfield>
+
+        <div class="row">
+          <ha-textfield
+            data-key="carto_api_key_light"
+            .label="亮色底图 Key (覆盖通用)"
+            .value="${c.carto_api_key_light ?? ''}"
+            @change="${this._valueChanged}"
+          ></ha-textfield>
+          <ha-textfield
+            data-key="carto_api_key_dark"
+            .label="暗色底图 Key (覆盖通用)"
+            .value="${c.carto_api_key_dark ?? ''}"
+            @change="${this._valueChanged}"
+          ></ha-textfield>
+        </div>
 
         <ha-textfield
           data-key="tile_layer_url"
           .label="浅色底图URL (tile_layer_url)"
           .value="${c.tile_layer_url ?? ''}"
-          @input="${this._valueChanged}"
+          @change="${this._valueChanged}"
         ></ha-textfield>
 
         <ha-textfield
           data-key="tile_layer_url_dark"
           .label="深色底图URL (tile_layer_url_dark)"
           .value="${c.tile_layer_url_dark ?? ''}"
-          @input="${this._valueChanged}"
+          @change="${this._valueChanged}"
         ></ha-textfield>
 
         <ha-textfield
           data-key="history_start"
           .label="历史起点 (history_start, 如 24 hours ago)"
           .value="${c.history_start ?? ''}"
-          @input="${this._valueChanged}"
+          @change="${this._valueChanged}"
         ></ha-textfield>
 
         <ha-textfield
           data-key="history_end"
           .label="历史终点 (history_end, 默认 now)"
           .value="${c.history_end ?? ''}"
-          @input="${this._valueChanged}"
+          @change="${this._valueChanged}"
         ></ha-textfield>
 
         <div class="row">
