@@ -21053,13 +21053,17 @@ class MapCardEntityMarker extends i {
 /**
  * Home Assistant 可视化编辑面板
  * 在 Lovelace 编辑界面中提供图形化配置表单，替代手写 YAML。
+ *
+ * 事件处理注意：HA 基于 Lit 的自定义元素（ha-textfield / ha-switch 等）
+ * 在触发 change/input 事件时 ev.target 指向内部原生 <input>，
+ * 必须用 ev.currentTarget 才能拿到挂了 data-key 的自定义元素本身。
  */
 class MapCardEditor extends i {
   static get properties() {
     return {
       hass: {},
-      _config: { state: true },
-      _entities: { state: true },
+      _config: { type: Object, state: true },
+      _entities: { type: Array, state: true },
     };
   }
 
@@ -21068,40 +21072,77 @@ class MapCardEditor extends i {
     this._entities = (config.entities || []).slice();
   }
 
+  // 通用文本/数值输入处理
   _valueChanged(ev) {
-    const target = ev.target;
-    const key = target.getAttribute("data-key");
+    const el = ev.currentTarget;
+    if (!el) return;
+    const key = el.getAttribute("data-key");
     if (!key) return;
-    let value = target.value;
-    if (target.type === "number") {
-      value = value === "" ? undefined : Number(value);
-    } else if (target.type === "checkbox" || target.checked !== undefined) {
-      // ha-switch fires 'change' with checked property
-      value = target.checked;
+
+    let value = el.value;
+    if (el.type === "number") {
+      value = value === "" || value === null ? undefined : Number(value);
     }
-    if (value === "" || value === undefined) {
-      delete this._config[key];
-    } else {
-      this._config[key] = value;
-    }
-    this._fireChanged();
+
+    this._updateConfig(key, value);
   }
 
-  _entitiesChanged(ev) {
-    this._entities = ev.detail.value || [];
-    this._config.entities = this._entities;
-    this._fireChanged();
+  // ha-switch 独立处理：checked 属性 + false 时删除字段
+  _switchChanged(ev) {
+    const el = ev.currentTarget;
+    if (!el) return;
+    const key = el.getAttribute("data-key");
+    if (!key) return;
+
+    const checked = !!el.checked;
+    this._updateConfig(key, checked ? true : undefined);
   }
 
+  // ha-select 的选中变更
   _selectChanged(ev) {
-    const key = ev.target.getAttribute("data-key");
-    this._config[key] = ev.target.value;
+    const el = ev.currentTarget;
+    if (!el) return;
+    const key = el.getAttribute("data-key");
+    if (!key) return;
+
+    this._updateConfig(key, el.value);
+  }
+
+  // ha-entity-picker 变更：它通过 value-changed 事件暴露新值
+  _entityChanged(ev) {
+    const el = ev.currentTarget;
+    if (!el) return;
+    const key = el.getAttribute("data-key") || "focus_entity";
+    const value = ev.detail?.value ?? el.value;
+    this._updateConfig(key, value || undefined);
+  }
+
+  // ha-entities-picker 多选变更
+  _entitiesChanged(ev) {
+    const value = ev.detail?.value ?? [];
+    this._entities = [...value];
+    this._updateConfig("entities", this._entities.length ? this._entities : undefined);
+  }
+
+  // 统一写回配置：重建对象让 Lit state 检测到变化 → 触发 re-render
+  _updateConfig(key, value) {
+    const next = { ...this._config };
+    if (value === undefined || value === null || value === "") {
+      delete next[key];
+    } else {
+      next[key] = value;
+    }
+    this._config = next;
     this._fireChanged();
   }
 
   _fireChanged() {
     this.dispatchEvent(
-      new CustomEvent("config-changed", { detail: { config: this._config } })
+      new CustomEvent("config-changed", {
+        detail: { config: this._config },
+        bubbles: true,
+        composed: true,
+      })
     );
   }
 
@@ -21112,16 +21153,18 @@ class MapCardEditor extends i {
         <ha-textfield
           data-key="title"
           .label="标题 (title)"
-          .value="${c.title || ''}"
+          .value="${c.title ?? ''}"
           @input="${this._valueChanged}"
         ></ha-textfield>
+
         <ha-entity-picker
           data-key="focus_entity"
           .label="聚焦实体 (focus_entity)"
-          .value="${c.focus_entity || ''}"
+          .value="${c.focus_entity ?? ''}"
           .hass="${this.hass}"
-          @change="${this._valueChanged}"
+          @change="${this._entityChanged}"
         ></ha-entity-picker>
+
         <div class="row">
           <ha-textfield
             data-key="x"
@@ -21138,6 +21181,7 @@ class MapCardEditor extends i {
             @input="${this._valueChanged}"
           ></ha-textfield>
         </div>
+
         <div class="row">
           <ha-textfield
             data-key="zoom"
@@ -21154,69 +21198,77 @@ class MapCardEditor extends i {
             @input="${this._valueChanged}"
           ></ha-textfield>
         </div>
+
         <ha-select
           data-key="theme_mode"
           .label="主题模式 (theme_mode)"
-          .value="${c.theme_mode || 'auto'}"
-          @selected-changed="${this._selectChanged}"
+          .value="${c.theme_mode ?? 'auto'}"
+          @change="${this._selectChanged}"
         >
           <mwc-list-item value="auto">自动 (跟随HA)</mwc-list-item>
           <mwc-list-item value="light">浅色</mwc-list-item>
           <mwc-list-item value="dark">深色</mwc-list-item>
         </ha-select>
+
         <ha-textfield
           data-key="carto_api_key"
           .label="CARTO API Key"
-          .value="${c.carto_api_key || ''}"
+          .value="${c.carto_api_key ?? ''}"
           @input="${this._valueChanged}"
         ></ha-textfield>
+
         <ha-textfield
           data-key="tile_layer_url"
           .label="浅色底图URL (tile_layer_url)"
-          .value="${c.tile_layer_url || ''}"
+          .value="${c.tile_layer_url ?? ''}"
           @input="${this._valueChanged}"
         ></ha-textfield>
+
         <ha-textfield
           data-key="tile_layer_url_dark"
           .label="深色底图URL (tile_layer_url_dark)"
-          .value="${c.tile_layer_url_dark || ''}"
+          .value="${c.tile_layer_url_dark ?? ''}"
           @input="${this._valueChanged}"
         ></ha-textfield>
+
         <ha-textfield
           data-key="history_start"
           .label="历史起点 (history_start, 如 24 hours ago)"
-          .value="${c.history_start || ''}"
+          .value="${c.history_start ?? ''}"
           @input="${this._valueChanged}"
         ></ha-textfield>
+
         <ha-textfield
           data-key="history_end"
           .label="历史终点 (history_end, 默认 now)"
-          .value="${c.history_end || ''}"
+          .value="${c.history_end ?? ''}"
           @input="${this._valueChanged}"
         ></ha-textfield>
+
         <div class="row">
-          <ha-formfield .label="启用聚类 (cluster_markers)">
+          <ha-formfield label="启用聚类">
             <ha-switch
               data-key="cluster_markers"
-              .checked="${c.cluster_markers ?? false}"
-              @change="${this._valueChanged}"
+              .checked="${!!c.cluster_markers}"
+              @change="${this._switchChanged}"
             ></ha-switch>
           </ha-formfield>
-          <ha-formfield .label="日期范围选择 (history_date_selection)">
+          <ha-formfield label="日期范围选择">
             <ha-switch
               data-key="history_date_selection"
-              .checked="${c.history_date_selection ?? false}"
-              @change="${this._valueChanged}"
+              .checked="${!!c.history_date_selection}"
+              @change="${this._switchChanged}"
             ></ha-switch>
           </ha-formfield>
-          <ha-formfield .label="调试 (debug)">
+          <ha-formfield label="调试">
             <ha-switch
               data-key="debug"
-              .checked="${c.debug ?? false}"
-              @change="${this._valueChanged}"
+              .checked="${!!c.debug}"
+              @change="${this._switchChanged}"
             ></ha-switch>
           </ha-formfield>
         </div>
+
         <ha-entities-picker
           .hass="${this.hass}"
           .value="${this._entities}"
