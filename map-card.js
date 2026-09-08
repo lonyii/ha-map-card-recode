@@ -21085,7 +21085,6 @@ class MapCardEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    // 把 hass 推给已存在的 ha-entity-picker
     if (this.shadowRoot) {
       this.shadowRoot.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = hass; });
     }
@@ -21094,23 +21093,10 @@ class MapCardEditor extends HTMLElement {
   _render() {
     const c = this._config;
     const entities = c.entities || [];
-    const eToStr = (e) => {
-      const state = this._hass?.states?.[e];
-      return state?.attributes?.friendly_name || e;
-    };
 
     this.shadowRoot.innerHTML = `
       <style>
-        .editor { display:flex; flex-direction:column; gap:16px; padding:4px 0; }
-        .section { border-top:1px solid var(--divider-color,#e0e0e0); padding-top:14px; }
-        .section:first-child { border-top:none; padding-top:0; }
-        .section-label {
-          font-size:11px; font-weight:500; text-transform:uppercase;
-          letter-spacing:.06em; color:var(--secondary-text-color,#888);
-          margin-bottom:6px;
-        }
-        .row { display:flex; gap:10px; }
-        .row > * { flex:1; }
+        .editor { display:flex; flex-direction:column; gap:14px; padding:4px 0; }
         label.field { display:block; font-size:13px; color:var(--primary-text-color,#333); margin-bottom:4px; }
         .text-input {
           display:block; width:100%; box-sizing:border-box;
@@ -21119,7 +21105,8 @@ class MapCardEditor extends HTMLElement {
           color:var(--primary-text-color,#333); font-size:14px; font-family:inherit;
         }
         .text-input:focus { outline:2px solid var(--primary-color,#03a9f4); }
-        select.text-input { height:40px; }
+        .row { display:flex; gap:10px; }
+        .row > * { flex:1; }
         .radio-group { display:flex; gap:18px; flex-wrap:wrap; padding-top:4px; }
         .radio-label { display:flex; align-items:center; gap:6px; cursor:pointer; font-size:14px; }
         .radio-label input[type=radio] { width:16px; height:16px; accent-color:var(--primary-color,#03a9f4); }
@@ -21131,186 +21118,76 @@ class MapCardEditor extends HTMLElement {
           color:var(--primary-color,#03a9f4); cursor:pointer; font-size:13px;
         }
         .add-btn:hover { opacity:.8; }
-        .switch-row { display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; }
-        .switch-row input[type=checkbox] { width:18px; height:18px; accent-color:var(--primary-color,#03a9f4); cursor:pointer; }
-        .hint { font-size:12px; color:var(--secondary-text-color,#888); margin-top:-4px; }
       </style>
       <div class="editor">
 
-        <div class="section">
-          <div class="section-label">基本设置</div>
+        <label class="field">标题
+          <input type="text" id="f-title" class="text-input"
+            value="${c.title ?? ''}" placeholder="留空使用无标题">
+        </label>
 
-          <label class="field">标题 (title)
-            <input type="text" id="f-title" class="text-input"
-              value="${c.title ?? ''}" placeholder="留空使用无标题">
-          </label>
+        <div id="entities-list"></div>
+        <button class="add-btn" id="add-entity">+ 添加实体</button>
 
-          <label class="field">纬度 (x)
-            <input type="number" id="f-x" class="text-input" step="any"
-              value="${c.x ?? ''}" placeholder="例如 31.2304">
-          </label>
-
-          <label class="field">经度 (y)
-            <input type="number" id="f-y" class="text-input" step="any"
-              value="${c.y ?? ''}" placeholder="例如 121.4737">
-          </label>
-
-          <div class="row">
-            <label class="field" style="flex:1">缩放级别 (zoom)
-              <input type="number" id="f-zoom" class="text-input" min="1" max="19"
-                value="${c.zoom ?? 12}">
-            </label>
-            <label class="field" style="flex:1">卡片大小 (card_size)
-              <input type="number" id="f-card-size" class="text-input" min="1" max="10"
-                value="${c.card_size ?? 5}">
-            </label>
+        <label class="field">主题模式
+          <div class="radio-group">
+            <label class="radio-label"><input type="radio" name="theme" value="auto" ${(c.theme_mode ?? 'auto') === 'auto' ? 'checked' : ''}>自动 (跟随 HA)</label>
+            <label class="radio-label"><input type="radio" name="theme" value="light" ${c.theme_mode === 'light' ? 'checked' : ''}>浅色</label>
+            <label class="radio-label"><input type="radio" name="theme" value="dark" ${c.theme_mode === 'dark' ? 'checked' : ''}>深色</label>
           </div>
+        </label>
 
-          <label class="field">主题模式 (theme_mode)
-            <div class="radio-group">
-              <label class="radio-label"><input type="radio" name="theme" value="auto" ${(c.theme_mode ?? 'auto') === 'auto' ? 'checked' : ''}>自动 (跟随 HA)</label>
-              <label class="radio-label"><input type="radio" name="theme" value="light" ${c.theme_mode === 'light' ? 'checked' : ''}>浅色</label>
-              <label class="radio-label"><input type="radio" name="theme" value="dark" ${c.theme_mode === 'dark' ? 'checked' : ''}>深色</label>
-            </div>
+        <label class="field">CARTO API Key
+          <input type="text" id="f-carto" class="text-input"
+            value="${c.carto_api_key ?? ''}" placeholder="亮色暗色共用，可留空">
+        </label>
+
+        <div class="row">
+          <label class="field" style="flex:1">缩放级别
+            <input type="number" id="f-zoom" class="text-input" min="1" max="19"
+              value="${c.zoom ?? 12}">
           </label>
-        </div>
-
-        <div class="section">
-          <div class="section-label">CARTO 底图 Key</div>
-
-          <label class="field">通用 Key (carto_api_key)
-            <input type="text" id="f-carto" class="text-input"
-              value="${c.carto_api_key ?? ''}" placeholder="亮色暗色共用">
-          </label>
-
-          <div class="row">
-            <label class="field" style="flex:1">亮色专用 (carto_api_key_light)
-              <input type="text" id="f-carto-light" class="text-input"
-                value="${c.carto_api_key_light ?? ''}" placeholder="留空用通用">
-            </label>
-            <label class="field" style="flex:1">暗色专用 (carto_api_key_dark)
-              <input type="text" id="f-carto-dark" class="text-input"
-                value="${c.carto_api_key_dark ?? ''}" placeholder="留空用通用">
-            </label>
-          </div>
-
-          <label class="field">浅色底图 URL (tile_layer_url)
-            <input type="text" id="f-tile-light" class="text-input"
-              value="${c.tile_layer_url ?? ''}" placeholder="留空用 CARTO Voyager 默认">
-          </label>
-          <label class="field">暗色底图 URL (tile_layer_url_dark)
-            <input type="text" id="f-tile-dark" class="text-input"
-              value="${c.tile_layer_url_dark ?? ''}" placeholder="留空用 CARTO dark_all 默认">
-          </label>
-        </div>
-
-        <div class="section">
-          <div class="section-label">实体</div>
-          <div class="entity-row" id="focus-row"></div>
-          <div id="entities-list"></div>
-          <button class="add-btn" id="add-entity">+ 添加实体</button>
-          <p class="hint">支持 device_tracker、zone 等含 latitude/longitude 的实体</p>
-        </div>
-
-        <div class="section">
-          <div class="section-label">历史时间范围</div>
-          <div class="row">
-            <label class="field" style="flex:1">起点 (history_start)
-              <input type="text" id="f-hist-start" class="text-input"
-                value="${c.history_start ?? ''}" placeholder="如 24 hours ago">
-            </label>
-            <label class="field" style="flex:1">终点 (history_end)
-              <input type="text" id="f-hist-end" class="text-input"
-                value="${c.history_end ?? ''}" placeholder="默认 now">
-            </label>
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="section-label">选项开关</div>
-          <label class="switch-row">
-            <input type="checkbox" id="f-cluster" ${c.cluster_markers ? 'checked' : ''}>
-            <span>启用聚类 (cluster_markers)</span>
-          </label>
-          <label class="switch-row">
-            <input type="checkbox" id="f-hist-sel" ${c.history_date_selection ? 'checked' : ''}>
-            <span>启用日期范围选择器 (history_date_selection)</span>
-          </label>
-          <label class="switch-row">
-            <input type="checkbox" id="f-debug" ${c.debug ? 'checked' : ''}>
-            <span>调试模式 (debug)</span>
+          <label class="field" style="flex:1">历史起点
+            <input type="text" id="f-hist-start" class="text-input"
+              value="${c.history_start ?? ''}" placeholder="24 hours ago">
           </label>
         </div>
       </div>
     `;
 
-    // focus_entity picker
-    const focusPicker = document.createElement('ha-entity-picker');
-    focusPicker.hass = this._hass;
-    focusPicker.value = c.focus_entity || '';
-    focusPicker.setAttribute('label', '聚焦实体 (focus_entity)');
-    focusPicker.setAttribute('allow-custom-entity', '');
-    focusPicker.addEventListener('value-changed', e => {
-      this._set('focus_entity', e.detail.value || null);
-    });
-    this.shadowRoot.getElementById('focus-row').appendChild(focusPicker);
+    // focus_entity picker — removed from editor UI, YAML 仍可用
 
-    // entities pickers (多行)
+    // entities pickers
     this._buildEntityPickers(entities);
 
-    // title (blur/回车 才触发)
+    // title
     this.shadowRoot.getElementById('f-title').addEventListener('change',
       e => this._set('title', e.target.value.trim() || null));
 
-    // x / y
-    const bindNum = (id, key, def) => {
-      this.shadowRoot.getElementById(id).addEventListener('change', e => {
-        const v = e.target.value;
-        const n = v === '' ? undefined : Number(v);
-        if (n === undefined || n === null) {
-          this._set(key, def ?? null);
-        } else {
-          this._set(key, n);
-        }
-      });
-    };
-    bindNum('f-x', 'x');
-    bindNum('f-y', 'y');
-    bindNum('f-zoom', 'zoom', 12);
-    bindNum('f-card-size', 'card_size', 5);
+    // zoom
+    this.shadowRoot.getElementById('f-zoom').addEventListener('change', e => {
+      const n = e.target.value === '' ? null : Number(e.target.value);
+      this._set('zoom', n);
+    });
 
-    // theme radio group
+    // theme
     this.shadowRoot.querySelectorAll('input[name="theme"]').forEach(r => {
       r.addEventListener('change', e => {
         if (e.target.checked) this._set('theme_mode', e.target.value);
       });
     });
 
-    // CARTO keys + URLs
-    const bindText = (id, key) => {
-      this.shadowRoot.getElementById(id).addEventListener('change', e => {
-        this._set(key, e.target.value.trim() || null);
-      });
-    };
-    bindText('f-carto', 'carto_api_key');
-    bindText('f-carto-light', 'carto_api_key_light');
-    bindText('f-carto-dark', 'carto_api_key_dark');
-    bindText('f-tile-light', 'tile_layer_url');
-    bindText('f-tile-dark', 'tile_layer_url_dark');
-    bindText('f-hist-start', 'history_start');
-    bindText('f-hist-end', 'history_end');
+    // carto key
+    this.shadowRoot.getElementById('f-carto').addEventListener('change', e => {
+      this._set('carto_api_key', e.target.value.trim() || null);
+    });
 
-    // switches
-    const bindCheck = (id, key) => {
-      this.shadowRoot.getElementById(id).addEventListener('change', e => {
-        this._set(key, e.target.checked ? true : null);
-      });
-    };
-    bindCheck('f-cluster', 'cluster_markers');
-    bindCheck('f-hist-sel', 'history_date_selection');
-    bindCheck('f-debug', 'debug');
+    // history_start
+    this.shadowRoot.getElementById('f-hist-start').addEventListener('change', e => {
+      this._set('history_start', e.target.value.trim() || null);
+    });
 
-    // add entity button
+    // add entity
     this.shadowRoot.getElementById('add-entity').addEventListener('click', () => {
       this._set('entities', [...(this._config.entities || []), '']);
     });
@@ -21338,16 +21215,7 @@ class MapCardEditor extends HTMLElement {
         this._set('entities', updated);
       });
 
-      const removeBtn = document.createElement('ha-icon-button');
-      removeBtn.setAttribute('label', '删除');
-      removeBtn.innerHTML = '<ha-icon icon="mdi:delete-outline"></ha-icon>';
-      removeBtn.addEventListener('click', () => {
-        const updated = (this._config.entities || []).filter((_, i) => i !== idx);
-        this._set('entities', updated);
-      });
-
       row.appendChild(picker);
-      row.appendChild(removeBtn);
       container.appendChild(row);
     });
   }
@@ -21360,7 +21228,6 @@ class MapCardEditor extends HTMLElement {
       config[key] = value;
     }
     this._config = config;
-    console.info('[map-card-editor] _set', key, '=', value, '→', config);
     this.dispatchEvent(new CustomEvent('config-changed', {
       detail: { config: this._config },
       bubbles: true, composed: true,
