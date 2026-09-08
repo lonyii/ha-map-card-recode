@@ -1,0 +1,12 @@
+{
+  "name": "Map Card Recode",
+  "content_in_root": true,
+  "render_readme": true,
+  "filename": "map-card.js",
+  "type": "lovelace",
+  "homeassistant": "2024.1.0",
+  "description": "基于 Leaflet 的 Home Assistant 地图卡片，支持实体位置、轨迹历史、WMS/GeoJSON 图层、自定义瓦片，自动跟随 HA 明暗主题切换底图。",
+  "iot_class": null,
+  "domains": [],
+  "country": []
+}
