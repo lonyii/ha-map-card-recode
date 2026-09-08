@@ -20723,7 +20723,10 @@ class MapCard extends i {
   }
 
   static getConfigElement() {
-    return document.createElement("map-card-editor");
+    console.info("[map-card] getConfigElement called, creating <map-card-editor>");
+    const el = document.createElement("map-card-editor");
+    console.info("[map-card] getConfigElement ->", el);
+    return el;
   }
 
   static getStubConfig(hass) {
@@ -21061,266 +21064,308 @@ class MapCardEntityMarker extends i {
 
 /**
  * Home Assistant 可视化编辑面板
- * 在 Lovelace 编辑界面中提供图形化配置表单，替代手写 YAML。
  *
- * 事件处理注意：HA 基于 Lit 的自定义元素（ha-textfield / ha-switch 等）
- * 在触发 change/input 事件时 ev.target 指向内部原生 <input>，
- * 必须用 ev.currentTarget 才能拿到挂了 data-key 的自定义元素本身。
+ * 关键：必须 extends HTMLElement，不能 extends 文件内打包的 LitElement。
+ * 本文件打包了 Lit 4.2.2（变量 `i`），而 HA 前端自带的是另一套 Lit，
+ * 两者混用会导致 ha-textfield / ha-switch 等组件静默崩溃。
+ * 参考实现：track-history-card-recode.js 的 LovelaceTrackHistoryCardEditor。
  */
-class MapCardEditor extends i {
-  static get properties() {
-    return {
-      hass: {},
-      _config: { type: Object, state: true },
-      _entities: { type: Array, state: true },
-    };
+class MapCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this._config = {};
+    this._hass = null;
   }
 
   setConfig(config) {
     this._config = { ...config };
-    this._entities = (config.entities || []).slice();
+    this._render();
   }
 
-  // 通用文本/数值输入处理
-  _valueChanged(ev) {
-    const el = ev.currentTarget;
-    if (!el) return;
-    const key = el.getAttribute("data-key");
-    if (!key) return;
-
-    let value = el.value;
-    if (el.type === "number") {
-      value = value === "" || value === null ? undefined : Number(value);
+  set hass(hass) {
+    this._hass = hass;
+    // 把 hass 推给已存在的 ha-entity-picker
+    if (this.shadowRoot) {
+      this.shadowRoot.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = hass; });
     }
-
-    this._updateConfig(key, value);
   }
 
-  // ha-switch 独立处理：checked 属性 + false 时删除字段
-  _switchChanged(ev) {
-    const el = ev.currentTarget;
-    if (!el) return;
-    const key = el.getAttribute("data-key");
-    if (!key) return;
+  _render() {
+    const c = this._config;
+    const entities = c.entities || [];
+    const eToStr = (e) => {
+      const state = this._hass?.states?.[e];
+      return state?.attributes?.friendly_name || e;
+    };
 
-    const checked = !!el.checked;
-    this._updateConfig(key, checked ? true : undefined);
-  }
+    this.shadowRoot.innerHTML = `
+      <style>
+        .editor { display:flex; flex-direction:column; gap:16px; padding:4px 0; }
+        .section { border-top:1px solid var(--divider-color,#e0e0e0); padding-top:14px; }
+        .section:first-child { border-top:none; padding-top:0; }
+        .section-label {
+          font-size:11px; font-weight:500; text-transform:uppercase;
+          letter-spacing:.06em; color:var(--secondary-text-color,#888);
+          margin-bottom:6px;
+        }
+        .row { display:flex; gap:10px; }
+        .row > * { flex:1; }
+        label.field { display:block; font-size:13px; color:var(--primary-text-color,#333); margin-bottom:4px; }
+        .text-input {
+          display:block; width:100%; box-sizing:border-box;
+          padding:8px 10px; border:1px solid var(--divider-color,#e0e0e0);
+          border-radius:6px; background:var(--card-background-color,#fff);
+          color:var(--primary-text-color,#333); font-size:14px; font-family:inherit;
+        }
+        .text-input:focus { outline:2px solid var(--primary-color,#03a9f4); }
+        select.text-input { height:40px; }
+        .radio-group { display:flex; gap:18px; flex-wrap:wrap; padding-top:4px; }
+        .radio-label { display:flex; align-items:center; gap:6px; cursor:pointer; font-size:14px; }
+        .radio-label input[type=radio] { width:16px; height:16px; accent-color:var(--primary-color,#03a9f4); }
+        .entity-row { display:flex; align-items:center; gap:4px; margin-bottom:6px; }
+        .entity-row ha-entity-picker { flex:1; }
+        .add-btn {
+          width:100%; padding:8px; background:none;
+          border:1px dashed var(--divider-color,#ccc); border-radius:6px;
+          color:var(--primary-color,#03a9f4); cursor:pointer; font-size:13px;
+        }
+        .add-btn:hover { opacity:.8; }
+        .switch-row { display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; }
+        .switch-row input[type=checkbox] { width:18px; height:18px; accent-color:var(--primary-color,#03a9f4); cursor:pointer; }
+        .hint { font-size:12px; color:var(--secondary-text-color,#888); margin-top:-4px; }
+      </style>
+      <div class="editor">
 
-  // ha-select 的选中变更
-  _selectChanged(ev) {
-    const el = ev.currentTarget;
-    if (!el) return;
-    const key = el.getAttribute("data-key");
-    if (!key) return;
+        <div class="section">
+          <div class="section-label">基本设置</div>
 
-    this._updateConfig(key, el.value);
-  }
+          <label class="field">标题 (title)
+            <input type="text" id="f-title" class="text-input"
+              value="${c.title ?? ''}" placeholder="留空使用无标题">
+          </label>
 
-  // ha-entity-picker 变更：它通过 value-changed 事件暴露新值
-  _entityChanged(ev) {
-    const el = ev.currentTarget;
-    if (!el) return;
-    const key = el.getAttribute("data-key") || "focus_entity";
-    const value = ev.detail?.value ?? el.value;
-    this._updateConfig(key, value || undefined);
-  }
+          <label class="field">纬度 (x)
+            <input type="number" id="f-x" class="text-input" step="any"
+              value="${c.x ?? ''}" placeholder="例如 31.2304">
+          </label>
 
-  // ha-entities-picker 多选变更
-  _entitiesChanged(ev) {
-    const value = ev.detail?.value ?? [];
-    this._entities = [...value];
-    this._updateConfig("entities", this._entities.length ? this._entities : undefined);
-  }
+          <label class="field">经度 (y)
+            <input type="number" id="f-y" class="text-input" step="any"
+              value="${c.y ?? ''}" placeholder="例如 121.4737">
+          </label>
 
-  // 统一写回配置：重建对象让 Lit state 检测到变化 → 触发 re-render
-  _updateConfig(key, value) {
-    const next = { ...this._config };
-    if (value === undefined || value === null || value === "") {
-      delete next[key];
-    } else {
-      next[key] = value;
-    }
-    this._config = next;
-    this._fireChanged();
-  }
+          <div class="row">
+            <label class="field" style="flex:1">缩放级别 (zoom)
+              <input type="number" id="f-zoom" class="text-input" min="1" max="19"
+                value="${c.zoom ?? 12}">
+            </label>
+            <label class="field" style="flex:1">卡片大小 (card_size)
+              <input type="number" id="f-card-size" class="text-input" min="1" max="10"
+                value="${c.card_size ?? 5}">
+            </label>
+          </div>
 
-  _fireChanged() {
-    this.dispatchEvent(
-      new CustomEvent("config-changed", {
-        detail: { config: this._config },
-        bubbles: true,
-        composed: true,
-      })
-    );
-  }
-
-  render() {
-    const c = this._config || {};
-    return b`
-      <div class="card-config">
-        <ha-textfield
-          data-key="title"
-          .label="标题 (title)"
-          .value="${c.title ?? ''}"
-          @change="${this._valueChanged}"
-        ></ha-textfield>
-
-        <ha-entity-picker
-          data-key="focus_entity"
-          .label="聚焦实体 (focus_entity)"
-          .value="${c.focus_entity ?? ''}"
-          .hass="${this.hass}"
-          @change="${this._entityChanged}"
-        ></ha-entity-picker>
-
-        <div class="row">
-          <ha-textfield
-            data-key="x"
-            .label="纬度 (x)"
-            type="number"
-            .value="${c.x ?? ''}"
-            @change="${this._valueChanged}"
-          ></ha-textfield>
-          <ha-textfield
-            data-key="y"
-            .label="经度 (y)"
-            type="number"
-            .value="${c.y ?? ''}"
-            @change="${this._valueChanged}"
-          ></ha-textfield>
+          <label class="field">主题模式 (theme_mode)
+            <div class="radio-group">
+              <label class="radio-label"><input type="radio" name="theme" value="auto" ${(c.theme_mode ?? 'auto') === 'auto' ? 'checked' : ''}>自动 (跟随 HA)</label>
+              <label class="radio-label"><input type="radio" name="theme" value="light" ${c.theme_mode === 'light' ? 'checked' : ''}>浅色</label>
+              <label class="radio-label"><input type="radio" name="theme" value="dark" ${c.theme_mode === 'dark' ? 'checked' : ''}>深色</label>
+            </div>
+          </label>
         </div>
 
-        <div class="row">
-          <ha-textfield
-            data-key="zoom"
-            .label="缩放级别 (zoom, 默认12)"
-            type="number"
-            .value="${c.zoom ?? ''}"
-            @change="${this._valueChanged}"
-          ></ha-textfield>
-          <ha-textfield
-            data-key="card_size"
-            .label="卡片大小 (card_size, 默认5)"
-            type="number"
-            .value="${c.card_size ?? ''}"
-            @change="${this._valueChanged}"
-          ></ha-textfield>
+        <div class="section">
+          <div class="section-label">CARTO 底图 Key</div>
+
+          <label class="field">通用 Key (carto_api_key)
+            <input type="text" id="f-carto" class="text-input"
+              value="${c.carto_api_key ?? ''}" placeholder="亮色暗色共用">
+          </label>
+
+          <div class="row">
+            <label class="field" style="flex:1">亮色专用 (carto_api_key_light)
+              <input type="text" id="f-carto-light" class="text-input"
+                value="${c.carto_api_key_light ?? ''}" placeholder="留空用通用">
+            </label>
+            <label class="field" style="flex:1">暗色专用 (carto_api_key_dark)
+              <input type="text" id="f-carto-dark" class="text-input"
+                value="${c.carto_api_key_dark ?? ''}" placeholder="留空用通用">
+            </label>
+          </div>
+
+          <label class="field">浅色底图 URL (tile_layer_url)
+            <input type="text" id="f-tile-light" class="text-input"
+              value="${c.tile_layer_url ?? ''}" placeholder="留空用 CARTO Voyager 默认">
+          </label>
+          <label class="field">暗色底图 URL (tile_layer_url_dark)
+            <input type="text" id="f-tile-dark" class="text-input"
+              value="${c.tile_layer_url_dark ?? ''}" placeholder="留空用 CARTO dark_all 默认">
+          </label>
         </div>
 
-        <ha-select
-          data-key="theme_mode"
-          .label="主题模式 (theme_mode)"
-          .value="${c.theme_mode ?? 'auto'}"
-          @change="${this._selectChanged}"
-        >
-          <mwc-list-item value="auto">自动 (跟随HA)</mwc-list-item>
-          <mwc-list-item value="light">浅色</mwc-list-item>
-          <mwc-list-item value="dark">深色</mwc-list-item>
-        </ha-select>
-
-        <ha-textfield
-          data-key="carto_api_key"
-          .label="CARTO API Key (通用，亮色暗色共用)"
-          .value="${c.carto_api_key ?? ''}"
-          @change="${this._valueChanged}"
-        ></ha-textfield>
-
-        <div class="row">
-          <ha-textfield
-            data-key="carto_api_key_light"
-            .label="亮色底图 Key (覆盖通用)"
-            .value="${c.carto_api_key_light ?? ''}"
-            @change="${this._valueChanged}"
-          ></ha-textfield>
-          <ha-textfield
-            data-key="carto_api_key_dark"
-            .label="暗色底图 Key (覆盖通用)"
-            .value="${c.carto_api_key_dark ?? ''}"
-            @change="${this._valueChanged}"
-          ></ha-textfield>
+        <div class="section">
+          <div class="section-label">实体</div>
+          <div class="entity-row" id="focus-row"></div>
+          <div id="entities-list"></div>
+          <button class="add-btn" id="add-entity">+ 添加实体</button>
+          <p class="hint">支持 device_tracker、zone 等含 latitude/longitude 的实体</p>
         </div>
 
-        <ha-textfield
-          data-key="tile_layer_url"
-          .label="浅色底图URL (tile_layer_url)"
-          .value="${c.tile_layer_url ?? ''}"
-          @change="${this._valueChanged}"
-        ></ha-textfield>
-
-        <ha-textfield
-          data-key="tile_layer_url_dark"
-          .label="深色底图URL (tile_layer_url_dark)"
-          .value="${c.tile_layer_url_dark ?? ''}"
-          @change="${this._valueChanged}"
-        ></ha-textfield>
-
-        <ha-textfield
-          data-key="history_start"
-          .label="历史起点 (history_start, 如 24 hours ago)"
-          .value="${c.history_start ?? ''}"
-          @change="${this._valueChanged}"
-        ></ha-textfield>
-
-        <ha-textfield
-          data-key="history_end"
-          .label="历史终点 (history_end, 默认 now)"
-          .value="${c.history_end ?? ''}"
-          @change="${this._valueChanged}"
-        ></ha-textfield>
-
-        <div class="row">
-          <ha-formfield label="启用聚类">
-            <ha-switch
-              data-key="cluster_markers"
-              .checked="${!!c.cluster_markers}"
-              @change="${this._switchChanged}"
-            ></ha-switch>
-          </ha-formfield>
-          <ha-formfield label="日期范围选择">
-            <ha-switch
-              data-key="history_date_selection"
-              .checked="${!!c.history_date_selection}"
-              @change="${this._switchChanged}"
-            ></ha-switch>
-          </ha-formfield>
-          <ha-formfield label="调试">
-            <ha-switch
-              data-key="debug"
-              .checked="${!!c.debug}"
-              @change="${this._switchChanged}"
-            ></ha-switch>
-          </ha-formfield>
+        <div class="section">
+          <div class="section-label">历史时间范围</div>
+          <div class="row">
+            <label class="field" style="flex:1">起点 (history_start)
+              <input type="text" id="f-hist-start" class="text-input"
+                value="${c.history_start ?? ''}" placeholder="如 24 hours ago">
+            </label>
+            <label class="field" style="flex:1">终点 (history_end)
+              <input type="text" id="f-hist-end" class="text-input"
+                value="${c.history_end ?? ''}" placeholder="默认 now">
+            </label>
+          </div>
         </div>
 
-        <ha-entities-picker
-          .hass="${this.hass}"
-          .value="${this._entities}"
-          label="实体 (entities)"
-          @value-changed="${this._entitiesChanged}"
-        ></ha-entities-picker>
+        <div class="section">
+          <div class="section-label">选项开关</div>
+          <label class="switch-row">
+            <input type="checkbox" id="f-cluster" ${c.cluster_markers ? 'checked' : ''}>
+            <span>启用聚类 (cluster_markers)</span>
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" id="f-hist-sel" ${c.history_date_selection ? 'checked' : ''}>
+            <span>启用日期范围选择器 (history_date_selection)</span>
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" id="f-debug" ${c.debug ? 'checked' : ''}>
+            <span>调试模式 (debug)</span>
+          </label>
+        </div>
       </div>
     `;
+
+    // focus_entity picker
+    const focusPicker = document.createElement('ha-entity-picker');
+    focusPicker.hass = this._hass;
+    focusPicker.value = c.focus_entity || '';
+    focusPicker.setAttribute('label', '聚焦实体 (focus_entity)');
+    focusPicker.setAttribute('allow-custom-entity', '');
+    focusPicker.addEventListener('value-changed', e => {
+      this._set('focus_entity', e.detail.value || null);
+    });
+    this.shadowRoot.getElementById('focus-row').appendChild(focusPicker);
+
+    // entities pickers (多行)
+    this._buildEntityPickers(entities);
+
+    // title (blur/回车 才触发)
+    this.shadowRoot.getElementById('f-title').addEventListener('change',
+      e => this._set('title', e.target.value.trim() || null));
+
+    // x / y
+    const bindNum = (id, key, def) => {
+      this.shadowRoot.getElementById(id).addEventListener('change', e => {
+        const v = e.target.value;
+        const n = v === '' ? undefined : Number(v);
+        if (n === undefined || n === null) {
+          this._set(key, def ?? null);
+        } else {
+          this._set(key, n);
+        }
+      });
+    };
+    bindNum('f-x', 'x');
+    bindNum('f-y', 'y');
+    bindNum('f-zoom', 'zoom', 12);
+    bindNum('f-card-size', 'card_size', 5);
+
+    // theme radio group
+    this.shadowRoot.querySelectorAll('input[name="theme"]').forEach(r => {
+      r.addEventListener('change', e => {
+        if (e.target.checked) this._set('theme_mode', e.target.value);
+      });
+    });
+
+    // CARTO keys + URLs
+    const bindText = (id, key) => {
+      this.shadowRoot.getElementById(id).addEventListener('change', e => {
+        this._set(key, e.target.value.trim() || null);
+      });
+    };
+    bindText('f-carto', 'carto_api_key');
+    bindText('f-carto-light', 'carto_api_key_light');
+    bindText('f-carto-dark', 'carto_api_key_dark');
+    bindText('f-tile-light', 'tile_layer_url');
+    bindText('f-tile-dark', 'tile_layer_url_dark');
+    bindText('f-hist-start', 'history_start');
+    bindText('f-hist-end', 'history_end');
+
+    // switches
+    const bindCheck = (id, key) => {
+      this.shadowRoot.getElementById(id).addEventListener('change', e => {
+        this._set(key, e.target.checked ? true : null);
+      });
+    };
+    bindCheck('f-cluster', 'cluster_markers');
+    bindCheck('f-hist-sel', 'history_date_selection');
+    bindCheck('f-debug', 'debug');
+
+    // add entity button
+    this.shadowRoot.getElementById('add-entity').addEventListener('click', () => {
+      this._set('entities', [...(this._config.entities || []), '']);
+    });
   }
 
-  static get styles() {
-    return i$3`
-      .card-config {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-      .row {
-        display: flex;
-        gap: 12px;
-      }
-      .row > * {
-        flex: 1;
-      }
-      ha-textfield, ha-select, ha-entity-picker {
-        width: 100%;
-      }
-    `;
+  _buildEntityPickers(entities) {
+    const container = this.shadowRoot.getElementById('entities-list');
+    if (!container) return;
+    entities.forEach((entity, idx) => {
+      const row = document.createElement('div');
+      row.className = 'entity-row';
+
+      const picker = document.createElement('ha-entity-picker');
+      picker.hass = this._hass;
+      picker.value = entity;
+      picker.setAttribute('label', `实体 ${idx + 1}`);
+      picker.setAttribute('allow-custom-entity', '');
+      picker.addEventListener('value-changed', e => {
+        const updated = [...(this._config.entities || [])];
+        if (e.detail.value) {
+          updated[idx] = e.detail.value;
+        } else {
+          updated.splice(idx, 1);
+        }
+        this._set('entities', updated);
+      });
+
+      const removeBtn = document.createElement('ha-icon-button');
+      removeBtn.setAttribute('label', '删除');
+      removeBtn.innerHTML = '<ha-icon icon="mdi:delete-outline"></ha-icon>';
+      removeBtn.addEventListener('click', () => {
+        const updated = (this._config.entities || []).filter((_, i) => i !== idx);
+        this._set('entities', updated);
+      });
+
+      row.appendChild(picker);
+      row.appendChild(removeBtn);
+      container.appendChild(row);
+    });
+  }
+
+  _set(key, value) {
+    const config = { ...this._config };
+    if (value === null || value === undefined) {
+      delete config[key];
+    } else {
+      config[key] = value;
+    }
+    this._config = config;
+    console.info('[map-card-editor] _set', key, '=', value, '→', config);
+    this.dispatchEvent(new CustomEvent('config-changed', {
+      detail: { config: this._config },
+      bubbles: true, composed: true,
+    }));
+    this._render();
   }
 }
 
@@ -21329,7 +21374,7 @@ if (!customElements.get("map-card")) {
   customElements.define("map-card-entity-marker", MapCardEntityMarker);
   customElements.define("map-card-editor", MapCardEditor);
   console.info(
-    `%cnathan-gs/ha-map-card: 1.16.0`,
+    `%cnathan-gs/ha-map-card: 1.16.0 (自定义编辑器已注册: map-card-editor)`,
     'color: orange; font-weight: bold; background: black'
   );
 }
@@ -21339,6 +21384,8 @@ window.customCards.push({
     name: 'Map Card',
     description: 'A more powerful Map Card for Home Assistant',
     type: 'map-card',
+    editor: 'map-card-editor',
     preview: true,
     documentationURL: `https://github.com/nathan-gs/ha-map-card`,
 });
+console.info("[map-card] customCards 已注册，editor=map-card-editor");
