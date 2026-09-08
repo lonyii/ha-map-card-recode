@@ -21148,7 +21148,7 @@ class MapCardEditor extends HTMLElement {
 
         <label class="field">主题模式
           <div class="radio-group">
-            <label class="radio-label"><input type="radio" name="theme" value="auto" ${(c.theme_mode ?? 'auto') === 'auto' ? 'checked' : ''}>自动 (跟随 HA)</label>
+            <label class="radio-label"><input type="radio" name="theme" value="auto" ${(c.theme_mode ?? 'auto') === 'auto' ? 'checked' : ''}>自动</label>
             <label class="radio-label"><input type="radio" name="theme" value="light" ${c.theme_mode === 'light' ? 'checked' : ''}>浅色</label>
             <label class="radio-label"><input type="radio" name="theme" value="dark" ${c.theme_mode === 'dark' ? 'checked' : ''}>深色</label>
           </div>
