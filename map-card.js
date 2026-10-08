@@ -20635,19 +20635,13 @@ class MapCard extends i {
 
     }
 
-    // Stylesheets are injected once on first render, not on every state
-    // update. Re-evaluating <link> in the Shadow DOM on every render() is
-    // wasteful and the iOS HA app's WKWebView handles repeated external CSS
-    // requests poorly (can stall the main thread).
-    const stylesheetLinks = this._stylesheetsInjected ? '' : (
-      this._stylesheetsInjected = true,
-      '<link rel="stylesheet" href="/static/images/leaflet/leaflet.css">'
-      + '<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">'
-      + '<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">'
-    );
-
+    // Stylesheets are included directly in the Lit template. Lit's diffing
+    // ensures the <link> elements are created once and not recreated on
+    // subsequent renders.
     return b`
-            ${stylesheetLinks}
+            <link rel="stylesheet" href="/static/images/leaflet/leaflet.css">
+            <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+            <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
             <ha-card header="${this._config.title}">
               <div id="mapContainer" style="height: ${this._config.mapHeight}px">
                 <div id="map" style="height: ${this._config.mapHeight}px; width: 100%;">
