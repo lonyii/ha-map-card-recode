@@ -16545,6 +16545,8 @@ class MapConfig {
     this.y = inputConfig.y;
     this.zoom = this._setConfigWithDefault(inputConfig.zoom, 12);
     this.cardSize = this._setConfigWithDefault(inputConfig.card_size, 5);
+    // 可选: 用 map_height 覆盖 card_size 推算的高度, 支持 number(像素) 或 CSS 字符串(如 "100vh", "calc(100vh - 120px)")
+    this.mapHeightOverride = inputConfig.map_height ?? null;
     this.mapOptions = this._normalizeMapOptions(this._setConfigWithDefault(inputConfig.map_options, {}));
 
     // Get theme mode.
@@ -16684,13 +16686,30 @@ class MapConfig {
     return this.title != null;
   }
 
-  /** @returns {number} the map height */
+  /** @returns {number} the map height in pixels (backward compat, used by getCardSize logic) */
   get mapHeight() {
     if (this.hasTitle) {
       return (this.cardSize * 50) + 20 - 76 - 2;
     } else {
       return (this.cardSize * 50) + 20;
     }
+  }
+
+  /**
+   * 返回可直接用于 CSS height 的值。
+   * - 未设 map_height: 用 card_size 推算的像素值, 带 "px" 后缀
+   * - map_height 为数字: 当作像素, 带 "px" 后缀
+   * - map_height 为字符串: 原样返回 (如 "100vh", "calc(100vh - 120px)")
+   * @returns {string}
+   */
+  get mapHeightCss() {
+    if (this.mapHeightOverride != null) {
+      if (typeof this.mapHeightOverride === 'number') {
+        return this.mapHeightOverride + 'px';
+      }
+      return String(this.mapHeightOverride);
+    }
+    return this.mapHeight + 'px';
   }
 
   /** @returns {[EntityConfig]} */
@@ -20643,8 +20662,8 @@ class MapCard extends i {
             <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
             <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
             <ha-card header="${this._config.title}">
-              <div id="mapContainer" style="height: ${this._config.mapHeight}px">
-                <div id="map" style="height: ${this._config.mapHeight}px; width: 100%;">
+              <div id="mapContainer" style="height: ${this._config.mapHeightCss}">
+                <div id="map" style="height: ${this._config.mapHeightCss}; width: 100%;">
                   <ha-icon-button
                     label='Reset focus'
                     style='${this._isDarkMode() ? "color:#ffffff;" : "color:#000000;"} position: absolute; top: 75px; left: 3px; z-index: 1;'
