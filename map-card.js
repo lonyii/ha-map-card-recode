@@ -15440,6 +15440,12 @@ class EntityHistory {
   gradualOpacity;
   /** @type {[Polyline|CircleMarker]} */
   mapPaths = [];
+  /** @type {[CircleMarker|undefined]} per-segment dots, indexed by segment @private */
+  _dots = [];
+  /** @type {[Polyline|undefined]} per-segment lines, indexed by segment @private */
+  _lines = [];
+  /** @type {number} how many segments already have layers built @private */
+  _renderedSegments = 0;
   showDots = true;
   showLines = true;
   needRerender = false;
@@ -15460,17 +15466,23 @@ class EntityHistory {
   };
 
   /**
-   * @returns {[(Polyline|CircleMarker)]} 
+   * Incrementally build the track. history/stream delivers states one message
+   * at a time and this used to tear down and rebuild EVERY dot/line (each dot
+   * also gets a bound tooltip) on every 100ms debounce — O(n^2) SVG churn for
+   * a long track, which froze the iOS WKWebView while a 24h history loaded.
+   * Now only segments for newly arrived entries are created; existing layers
+   * are kept. A fresh EntityHistory (plus a cleared layer group) is created on
+   * every refreshHistory(), so removal still happens there.
+   *
+   * @returns {[(Polyline|CircleMarker)]} only the layers added by this call
    */
   update() {
     if(this.needRerender == false || this.entries.length == 0) {
       return [];
     }
-    this.mapPaths.forEach((marker) => marker.remove());
-    this.mapPaths = [];
 
-    let opacityStep;
-    let baseOpacity;
+    let opacityStep = 0;
+    let baseOpacity = 1;
 
     if (this.gradualOpacity) {
       if(this.entries.length <= 2) {
@@ -15480,16 +15492,27 @@ class EntityHistory {
         opacityStep = this.gradualOpacity / (this.entries.length - 2);
         baseOpacity = 1 - this.gradualOpacity;
       }
+
+      // The gradient is computed from the final entry count, so retune the
+      // opacities of already-rendered segments with cheap setStyle() calls
+      // instead of recreating the whole track.
+      for (let i = 0; i < this._renderedSegments; i++) {
+        const opacity = baseOpacity + i * opacityStep;
+        this._dots[i]?.setStyle({ opacity, fillOpacity: opacity });
+        this._lines[i]?.setStyle({ opacity });
+      }
     }
 
-    for (let i = 0; i < this.entries.length - 1; i++) {
+    const newPaths = [];
+    const segmentCount = this.entries.length - 1;
+
+    for (let i = this._renderedSegments; i < segmentCount; i++) {
       const entry = this.entries[i];
       const opacity = this.gradualOpacity
           ? baseOpacity + i * opacityStep : undefined;
 
       if(this.showDots) {
-        this.mapPaths.push(
-          L$2.circleMarker([entry.latitude, entry.longitude], 
+        const dot = L$2.circleMarker([entry.latitude, entry.longitude],
             {
               radius: 3,
               color: this.color,
@@ -15497,29 +15520,33 @@ class EntityHistory {
               fillOpacity: opacity,
               interactive: true,
             }
-          ).bindTooltip(`${this.entityTitle} ${entry.timestamp.toLocaleString()}`, {direction: 'top'})
-        );
+          ).bindTooltip(`${this.entityTitle} ${entry.timestamp.toLocaleString()}`, {direction: 'top'});
+        this._dots[i] = dot;
+        this.mapPaths.push(dot);
+        newPaths.push(dot);
       }
 
       const nextEntry = this.entries[i + 1];
       const latlngs = [[entry.latitude, entry.longitude], [nextEntry.latitude, nextEntry.longitude]];
 
       if(this.showLines) {
-        this.mapPaths.push(
-          L$2.polyline(latlngs, {
+        const line = L$2.polyline(latlngs, {
             color: this.color,
             opacity,
             interactive: false,
             // Round caps from adjacent segments stack on the shared vertex
             // and make joints darker than the segments (#164).
             lineCap: 'butt',
-          })
-        );
+          });
+        this._lines[i] = line;
+        this.mapPaths.push(line);
+        newPaths.push(line);
       }
     }
 
+    this._renderedSegments = segmentCount;
     this.needRerender = false;
-    return this.mapPaths;
+    return newPaths;
   }
 
 }
@@ -15786,7 +15813,9 @@ class EntityHistoryManager {
   history;
   /** @type {number|null} @private */
   _updateTimeout;
-  
+  /** @type {boolean} card/map torn down, pending timers must no-op @private */
+  _destroyed = false;
+
   constructor(entity, historyService, dateRangeManager, linkedEntityService) {
     this.entity = entity;
     this.historyService = historyService;
@@ -15895,14 +15924,22 @@ class EntityHistoryManager {
 
   /** @param {TimelineEntry} entry */
   react = (entry) => {
-    if(entry.originalEntityId != this.entity.id) {
+    if(this._destroyed || entry.originalEntityId != this.entity.id) {
       return;
     }
 
     if(this.hasHistory) {
       this.history.react(entry);
       if (this._updateTimeout) clearTimeout(this._updateTimeout);
-      this._updateTimeout = setTimeout(() => this.update(), 100);
+      this._updateTimeout = setTimeout(() => {
+        this._updateTimeout = null;
+        // The card may have been disconnected while this was waiting; drawing
+        // into a removed layer group/map is wasted work (and a risk on iOS).
+        if (this._destroyed || !this.historyLayerGroup) {
+          return;
+        }
+        this.update();
+      }, 100);
     }
     this.entity.react(entry);
   }
@@ -15917,6 +15954,18 @@ class EntityHistoryManager {
       marker.addTo(this.historyLayerGroup);
     });
     this.entity.updateMarkerPosition();
+  }
+
+  /**
+   * Called from EntitiesRenderService.cleanup() on card teardown. Cancels the
+   * debounced redraw so it can't run against a removed map.
+   */
+  destroy() {
+    this._destroyed = true;
+    if (this._updateTimeout) {
+      clearTimeout(this._updateTimeout);
+      this._updateTimeout = null;
+    }
   }
 }
 
@@ -19860,6 +19909,11 @@ class EntitiesRenderService {
   }
 
   cleanup() {
+    // Cancel per-entity debounced history redraws before the map goes away.
+    this.entities.forEach((ent) => {
+      ent.historyManager?.destroy?.();
+    });
+
     if (this._followPauseTimer) {
       clearTimeout(this._followPauseTimer);
       this._followPauseTimer = null;
@@ -19981,6 +20035,8 @@ class InitialViewRenderService {
   entitiesRenderService;
   /** @type {Map} */
   map;
+  /** @type {ResizeObserver|undefined} pending one-shot observer @private */
+  _observer;
 
   constructor(map, config, hass, entitiesRenderService) {
     this.map = map;
@@ -20001,7 +20057,13 @@ class InitialViewRenderService {
     if (container.clientWidth > 0 && container.clientHeight > 0) {
       this._applyInitialView();
     } else {
+      this._observer?.disconnect();
       const observer = new ResizeObserver(() => {
+        // Ignore a stale notification from a previous setup()/after teardown.
+        if (this._observer !== observer) {
+          return;
+        }
+        this._observer = undefined;
         observer.disconnect();
         try {
           if (this.map?.getContainer()?.isConnected) {
@@ -20012,7 +20074,20 @@ class InitialViewRenderService {
           Logger.debug("[InitialViewRenderService] Map no longer available, skipping initial view", e);
         }
       });
+      this._observer = observer;
       observer.observe(container);
+    }
+  }
+
+  /**
+   * Cancel a pending initial-view observer on card teardown, otherwise it can
+   * fire after map.remove() against the stale map instance (the container
+   * element is reused by a freshly created map).
+   */
+  destroy() {
+    if (this._observer) {
+      this._observer.disconnect();
+      this._observer = undefined;
     }
   }
 
@@ -20451,6 +20526,12 @@ class MapCard extends i {
   map;
   /** @type {ResizeObserver} */
   resizeObserver;
+  /** @type {number} 合并 resize 回调的 requestAnimationFrame 句柄 @private */
+  _resizeRaf = 0;
+  /** @type {boolean} 是否已有一帧待执行的 invalidateSize @private */
+  _resizeQueued = false;
+  /** @type {{w: number, h: number}} 上次已处理的容器尺寸，用于过滤无效通知 @private */
+  _lastMapSize = { w: 0, h: 0 };
   /** @type {HaHistoryService} */
   historyService;
   /** @type {HaLinkedEntityService} */
@@ -20596,10 +20677,65 @@ class MapCard extends i {
       return this.resizeObserver;
     }
 
+    // Fresh map: force the first positive-size notification to invalidate,
+    // even if the size happens to match a previous map instance.
+    this._lastMapSize = { w: 0, h: 0 };
+    this._resizeQueued = false;
+    this._resizeRaf = 0;
+
+    // Coalesce all resize notifications into at most one invalidateSize() per
+    // animation frame, and only invalidate when the container size actually
+    // changed. iOS WKWebView (the HA app) emits bursts of ResizeObserver
+    // notifications — including fractional-pixel oscillation — during view
+    // transitions, navigation-bar/safe-area changes and app resume. Calling
+    // invalidateSize() for each one forces layout + a tile regrid every time,
+    // which feeds back into the observer and pegs the Web thread hard
+    // ("card freezes on open"). Measurement happens in the RAF callback so we
+    // always act on the latest laid-out size.
+    const queueInvalidate = () => {
+      if (this._resizeQueued || !this.map) {
+        return;
+      }
+      this._resizeQueued = true;
+      this._resizeRaf = requestAnimationFrame(() => {
+        this._resizeRaf = 0;
+        this._resizeQueued = false;
+
+        // The card may have been torn down (or moved to another view) while
+        // the frame was queued.
+        const map = this.map;
+        if (!map || !this.isConnected || !this.resizeObserver) {
+          return;
+        }
+        const container = map.getContainer && map.getContainer();
+        if (!container || !container.isConnected) {
+          return;
+        }
+
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        // Hidden / not laid out yet — another notification arrives when it
+        // becomes visible.
+        if (width === 0 || height === 0) {
+          return;
+        }
+        if (width === this._lastMapSize.w && height === this._lastMapSize.h) {
+          return;
+        }
+        this._lastMapSize = { w: width, h: height };
+        map.invalidateSize();
+      });
+    };
+
     const resizeObserver = new ResizeObserver(entries => {
-      for (let entry of entries) {
-        if (entry.target === this.map?.getContainer()) {
-          this.map?.invalidateSize();
+      const map = this.map;
+      if (!map || !this.isConnected) {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.target === map.getContainer()) {
+          queueInvalidate();
+          break;
         }
       }
     });
@@ -20662,12 +20798,22 @@ class MapCard extends i {
   _teardown() {
     this.resizeObserver?.disconnect();
     this.resizeObserver = undefined;
+    // Cancel a resize frame queued before teardown so it can't touch a
+    // removed map (a freeze/crash source when the iOS app backgrounds the
+    // WebView mid-transition).
+    if (this._resizeRaf) {
+      cancelAnimationFrame(this._resizeRaf);
+      this._resizeRaf = 0;
+    }
+    this._resizeQueued = false;
     this.historyService?.unsubscribe();
     this.dateRangeManager?.disconnect();
     this.linkedEntityService?.disconnect();
     this.pluginsRenderService?.cleanup();
     this.geoJsonRenderService?.cleanup();
     this.entitiesRenderService?.cleanup();
+    // Disconnect the one-shot initial-view observer before the map goes away.
+    this.initialViewRenderService?.destroy();
     this.map.remove();
     this.map = undefined;
   }
