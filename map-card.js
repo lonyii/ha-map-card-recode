@@ -20662,8 +20662,8 @@ class MapCard extends i {
             <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
             <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
             <ha-card header="${this._config.title}">
-              <div id="mapContainer" style="height: ${this._config.mapHeightCss}">
-                <div id="map" style="height: ${this._config.mapHeightCss}; width: 100%;">
+              <div id="mapContainer" style="min-height: ${this._config.mapHeightCss}">
+                <div id="map" style="min-height: ${this._config.mapHeightCss}; width: 100%;">
                   <ha-icon-button
                     label='Reset focus'
                     style='${this._isDarkMode() ? "color:#ffffff;" : "color:#000000;"} position: absolute; top: 75px; left: 3px; z-index: 1;'
@@ -20944,16 +20944,19 @@ class MapCard extends i {
       ha-card {
         display: flex;
         width: 100%;
+        height: 100%;
         flex-direction: column;
         overflow: hidden;
       }
       #mapContainer {
+        height: 100%;
         border-radius: var(--ha-card-border-radius, 12px);
         overflow: hidden;
         z-index: 0;
         width: 100%;
       }
       #map {
+        height: 100%;
         width: 100%;
       }
       .leaflet-pane {
