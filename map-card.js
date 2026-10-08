@@ -20526,10 +20526,12 @@ class MapCard extends i {
   map;
   /** @type {ResizeObserver} */
   resizeObserver;
-  /** @type {number} 合并 resize 回调的 requestAnimationFrame 句柄 @private */
+  /** @type {number} 合并 resize 回调的 setTimeout 句柄 @private */
   _resizeRaf = 0;
   /** @type {boolean} 是否已有一帧待执行的 invalidateSize @private */
   _resizeQueued = false;
+  /** @type {boolean} invalidateSize 重入守卫 @private */
+  _invalidating = false;
   /** @type {{w: number, h: number}} 上次已处理的容器尺寸，用于过滤无效通知 @private */
   _lastMapSize = { w: 0, h: 0 };
   /** @type {HaHistoryService} */
@@ -20633,13 +20635,22 @@ class MapCard extends i {
 
     }
 
+    // Stylesheets are injected once on first render, not on every state
+    // update. Re-evaluating <link> in the Shadow DOM on every render() is
+    // wasteful and the iOS HA app's WKWebView handles repeated external CSS
+    // requests poorly (can stall the main thread).
+    const stylesheetLinks = this._stylesheetsInjected ? '' : (
+      this._stylesheetsInjected = true,
+      '<link rel="stylesheet" href="/static/images/leaflet/leaflet.css">'
+      + '<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">'
+      + '<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">'
+    );
+
     return b`
-            <link rel="stylesheet" href="/static/images/leaflet/leaflet.css">
-            <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-            <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+            ${stylesheetLinks}
             <ha-card header="${this._config.title}">
-              <div id="mapContainer" style="min-height: ${this._config.mapHeight}px">
-                <div id="map" style="min-height: ${this._config.mapHeight}px">
+              <div id="mapContainer" style="height: ${this._config.mapHeight}px">
+                <div id="map" style="height: ${this._config.mapHeight}px; width: 100%;">
                   <ha-icon-button
                     label='Reset focus'
                     style='${this._isDarkMode() ? "color:#ffffff;" : "color:#000000;"} position: absolute; top: 75px; left: 3px; z-index: 1;'
@@ -20677,54 +20688,70 @@ class MapCard extends i {
       return this.resizeObserver;
     }
 
-    // Fresh map: force the first positive-size notification to invalidate,
-    // even if the size happens to match a previous map instance.
+    // Fresh map: force the first positive-size notification to invalidate.
     this._lastMapSize = { w: 0, h: 0 };
     this._resizeQueued = false;
     this._resizeRaf = 0;
 
-    // Coalesce all resize notifications into at most one invalidateSize() per
-    // animation frame, and only invalidate when the container size actually
-    // changed. iOS WKWebView (the HA app) emits bursts of ResizeObserver
-    // notifications — including fractional-pixel oscillation — during view
-    // transitions, navigation-bar/safe-area changes and app resume. Calling
-    // invalidateSize() for each one forces layout + a tile regrid every time,
-    // which feeds back into the observer and pegs the Web thread hard
-    // ("card freezes on open"). Measurement happens in the RAF callback so we
-    // always act on the latest laid-out size.
+    // iOS HA app (WKWebView) differs from Safari in two critical ways:
+    //   1. requestAnimationFrame is suspended/throttled during view transitions
+    //      and background→foreground, causing queued callbacks to pile up and
+    //      fire in a burst that freezes the UI.
+    //   2. The WKWebView emits dense bursts of ResizeObserver notifications
+    //      (including fractional-pixel oscillation) during safe-area / nav-bar
+    //      changes that Safari handles gracefully.
+    // Using setTimeout (not RAF) for debouncing is more reliable on iOS, and
+    // the re-entrancy guard + size-diff check prevent feedback loops.
+    const RESIZE_DEBOUNCE_MS = 200;
+
+    const doInvalidate = () => {
+      this._resizeRaf = 0;
+      this._resizeQueued = false;
+
+      const map = this.map;
+      if (!map || !this.isConnected || !this.resizeObserver) {
+        return;
+      }
+      const container = map.getContainer && map.getContainer();
+      if (!container || !container.isConnected) {
+        return;
+      }
+
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      if (width === 0 || height === 0) {
+        return;
+      }
+      if (width === this._lastMapSize.w && height === this._lastMapSize.h) {
+        return;
+      }
+      this._lastMapSize = { w: width, h: height };
+
+      // Re-entrancy guard: invalidateSize() can trigger layout that fires the
+      // ResizeObserver synchronously on some WebKit versions. The guard breaks
+      // the cycle.
+      if (this._invalidating) {
+        return;
+      }
+      this._invalidating = true;
+      try {
+        // debounceMoveend: true batches moveend events so tile/WMS layers
+        // don't re-request on every intermediate size step.
+        map.invalidateSize({ debounceMoveend: true });
+      } finally {
+        this._invalidating = false;
+      }
+    };
+
     const queueInvalidate = () => {
       if (this._resizeQueued || !this.map) {
         return;
       }
       this._resizeQueued = true;
-      this._resizeRaf = requestAnimationFrame(() => {
-        this._resizeRaf = 0;
-        this._resizeQueued = false;
-
-        // The card may have been torn down (or moved to another view) while
-        // the frame was queued.
-        const map = this.map;
-        if (!map || !this.isConnected || !this.resizeObserver) {
-          return;
-        }
-        const container = map.getContainer && map.getContainer();
-        if (!container || !container.isConnected) {
-          return;
-        }
-
-        const width = container.clientWidth;
-        const height = container.clientHeight;
-        // Hidden / not laid out yet — another notification arrives when it
-        // becomes visible.
-        if (width === 0 || height === 0) {
-          return;
-        }
-        if (width === this._lastMapSize.w && height === this._lastMapSize.h) {
-          return;
-        }
-        this._lastMapSize = { w: width, h: height };
-        map.invalidateSize();
-      });
+      if (this._resizeRaf) {
+        clearTimeout(this._resizeRaf);
+      }
+      this._resizeRaf = setTimeout(doInvalidate, RESIZE_DEBOUNCE_MS);
     };
 
     const resizeObserver = new ResizeObserver(entries => {
@@ -20753,7 +20780,13 @@ class MapCard extends i {
     L$2.Icon.Default.imagePath = "/static/images/leaflet/images/";
 
     const mapEl = this.shadowRoot.querySelector('#map');
-    let map = L$2.map(mapEl, this._config.mapOptions);
+    // trackResize defaults to true, making Leaflet listen to window.resize.
+    // We already handle container-size changes via ResizeObserver, and the
+    // iOS HA app's WKWebView fires window.resize in bursts (safe-area/nav-bar
+    // changes) that double up with our observer. Disable the redundant
+    // listener to avoid the double-invalidate that froze iOS.
+    const mapOptions = { trackResize: false, ...this._config.mapOptions };
+    let map = L$2.map(mapEl, mapOptions);
 
     // Add dark class if darkmode
     this._isDarkMode() ? mapEl.classList.add('dark') : mapEl.classList.add('light');
@@ -20798,14 +20831,15 @@ class MapCard extends i {
   _teardown() {
     this.resizeObserver?.disconnect();
     this.resizeObserver = undefined;
-    // Cancel a resize frame queued before teardown so it can't touch a
+    // Cancel a resize timer queued before teardown so it can't touch a
     // removed map (a freeze/crash source when the iOS app backgrounds the
     // WebView mid-transition).
     if (this._resizeRaf) {
-      cancelAnimationFrame(this._resizeRaf);
+      clearTimeout(this._resizeRaf);
       this._resizeRaf = 0;
     }
     this._resizeQueued = false;
+    this._invalidating = false;
     this.historyService?.unsubscribe();
     this.dateRangeManager?.disconnect();
     this.linkedEntityService?.disconnect();
@@ -20895,7 +20929,6 @@ class MapCard extends i {
   static get styles() {
     return i$3`
       ha-card {
-        height: 100%;
         display: flex;
         width: 100%;
         flex-direction: column;
@@ -20905,11 +20938,10 @@ class MapCard extends i {
         border-radius: var(--ha-card-border-radius, 12px);
         overflow: hidden;
         z-index: 0;
-        height: 100%;
         width: 100%;
       }
       #map {
-        height: 100%;
+        width: 100%;
       }
       .leaflet-pane {
         z-index: 0 !important;
