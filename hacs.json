@@ -1,5 +1,6 @@
 {
-    "name": "map-card",
-    "render_readme": true,
-    "filename":"map-card.js"
+  "name": "Map Card",
+  "content_in_root": true,
+  "render_readme": true,
+  "filename": "map-card.js"
 }

@@ -1,8 +1,15 @@
 # Map Card
 
+[![Release](https://img.shields.io/github/v/release/lonyii/ha-map-card-recode)](https://github.com/lonyii/ha-map-card-recode/releases/latest)
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
+
 基于 [ha-map-card](https://github.com/nathan-gs/ha-map-card) 进行改写。
 
 基于 [Leaflet](https://leafletjs.com/) 的 Home Assistant 地图卡片，支持实体位置、轨迹历史、WMS/GeoJSON 图层、自定义瓦片等，默认底图为 CARTO Voyager（亮）/ dark_all（暗）并自动跟随 HA 主题切换。
+
+- 当前版本：[v1.0.18](https://github.com/lonyii/ha-map-card-recode/releases/latest)
+- 单文件分发：`map-card.js`（无需构建，直接放入 `www` 即可）
+- 更新记录：见 [Releases](https://github.com/lonyii/ha-map-card-recode/releases)
 
 ---
 
@@ -27,15 +34,35 @@
 
 ## 安装
 
-1. 把 `map-card.js` 放到 HA 的 `www/community/map-card/` 目录（HACS 安装）或 `www/map-card.js`（手动）。
-2. 在 Lovelace 资源里添加：
+### 方式一：HACS 自定义存储库（推荐）
 
-```yaml
-url: /community/map-card/map-card.js
-type: module
-```
+1. HACS → 右上角 `⋮` → **自定义存储库**
+2. 类别选 **Dashboard**（Lovelace），URL 填：
 
-3. 刷新 Lovelace。
+   ```
+   https://github.com/lonyii/ha-map-card-recode
+   ```
+
+3. 在 HACS 中搜索 **Map Card** 并安装，安装后资源会自动注册为 `/hacsfiles/ha-map-card-recode/map-card.js`
+4. 按 `Ctrl + Shift + R` 强制刷新浏览器
+
+> 若资源未自动注册，手动在「设置 → 仪表盘 → ⋮ → 资源」添加：
+> `url: /hacsfiles/ha-map-card-recode/map-card.js`，类型 **JavaScript 模块**。
+
+### 方式二：手动安装
+
+1. 从 [Releases](https://github.com/lonyii/ha-map-card-recode/releases/latest) 下载 `map-card.js`
+2. 放到 `/config/www/community/map-card/map-card.js`
+3. 在「设置 → 仪表盘 → ⋮ → 资源」添加：
+
+   ```yaml
+   url: /local/community/map-card/map-card.js
+   type: module
+   ```
+
+4. 强制刷新浏览器（`Ctrl + Shift + R`）
+
+> **硬刷新提示**：HA 会强缓存自定义卡片 JS，更新 `map-card.js` 后若界面没变化，F12 → Network → 勾选 Disable cache → 再 Ctrl+Shift+R。
 
 ---
 
